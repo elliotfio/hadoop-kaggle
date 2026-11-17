@@ -1,0 +1,200 @@
+version: "3"
+
+vars:
+  COMPOSE: docker compose
+  JUPYTER_EXEC: docker exec spark-jupyter jupyter nbconvert --to notebook --execute --ExecutePreprocessor.timeout=600
+
+tasks:
+  default:
+    desc: Afficher la liste des commandes disponibles
+    cmds:
+      - task --list
+    silent: true
+
+  # ==========================================
+  # CYCLE DE VIE DOCKER & INFRASTRUCTURE
+  # ==========================================
+  build:
+    desc: Construire les images natives (amd64 / arm64) Hadoop HDFS + Workspace PySpark/Delta
+    cmds:
+      - "{{.COMPOSE}} build"
+
+  build:multiarch:
+    desc: Vérifier la construction croisée multi-architecture (linux/amd64,linux/arm64) via Buildx
+    cmds:
+      - docker buildx build --platform linux/amd64,linux/arm64 ./docker/hadoop
+      - docker buildx build --platform linux/amd64,linux/arm64 ./docker/workspace
+
+  up:
+    desc: Démarrer l'ensemble du cluster HDFS (1 NN + 3 DN), JupyterLab et Streamlit
+    cmds:
+      - mkdir -p data_raw notebooks app config
+      - "{{.COMPOSE}} up -d --build"
+      - task: wait-ready
+
+  wait-ready:
+    desc: Attendre que les 3 DataNodes HDFS, JupyterLab et Streamlit répondent
+    cmds:
+      - |
+        echo "Attente de l'enregistrement des 3 DataNodes HDFS et des interfaces Web..."
+        for i in $(seq 1 30); do
+          LIVE_DN=$(docker exec namenode hdfs dfsadmin -report 2>/dev/null | sed -n 's/.*Live datanodes (\([0-9][0-9]*\)).*/\1/p')
+          LIVE_DN=${LIVE_DN:-0}
+          JUPYTER_OK=$(curl -fs -o /dev/null http://localhost:8888/api && echo "1" || echo "0")
+          STREAMLIT_OK=$(curl -fs -o /dev/null http://localhost:8501/_stcore/health && echo "1" || echo "0")
+          if [ "$LIVE_DN" = "3" ] && [ "$JUPYTER_OK" = "1" ] && [ "$STREAMLIT_OK" = "1" ]; then
+            echo "Cluster opérationnel : 3/3 DataNodes actifs, JupyterLab (:8888) et Streamlit (:8501) prêts."
+            exit 0
+          fi
+          sleep 2
+        done
+        echo "Délai dépassé en attendant les services. Vérifiez avec 'task status'."
+        exit 1
+
+  down:
+    desc: Arrêter les conteneurs (conserve les volumes de données HDFS)
+    cmds:
+      - "{{.COMPOSE}} down"
+
+  clean:
+    desc: Arrêter les conteneurs et supprimer tous les volumes HDFS (remise à zéro)
+    cmds:
+      - "{{.COMPOSE}} down -v --remove-orphans"
+
+  status:
+    desc: Afficher l'état des conteneurs et le résumé des DataNodes HDFS
+    cmds:
+      - "{{.COMPOSE}} ps"
+      - docker exec namenode hdfs dfsadmin -report | head -n 25
+
+  logs:
+    desc: Suivre les journaux des conteneurs Docker
+    cmds:
+      - "{{.COMPOSE}} logs -f --tail=100"
+
+  # ==========================================
+  # DONNÉES KAGGLE & OPÉRATIONS HDFS (TP JOUR 1)
+  # ==========================================
+  data:download:
+    desc: "Télécharger un ou plusieurs datasets Kaggle dans data_raw/<nom>/ (ex: task data:download DATASET='auteur1/ds1,auteur2/ds2')"
+    cmds:
+      - |
+        RAW_SLUGS="{{.DATASETS}}{{if and .DATASETS .DATASET}},{{end}}{{.DATASET}}"
+        if [ -z "$RAW_SLUGS" ]; then
+          echo "Usage   : task data:download DATASET='<auteur1/dataset1>[,<auteur2/dataset2>...]'"
+          echo "Exemple : task data:download DATASET='olistbr/brazilian-ecommerce,anseldsouza/brazilian-ecommerce-public-dataset'"
+          exit 1
+        fi
+        PY_SCRIPT='
+        import re, shutil, sys
+        from pathlib import Path
+        import kagglehub
+
+        raw = sys.argv[1]
+        slugs = [s.strip() for s in re.split(r"[,\s]+", raw) if s.strip()]
+        exts = {".csv", ".parquet", ".json", ".jsonl", ".tsv"}
+        base_dst = Path("data_raw")
+        base_dst.mkdir(exist_ok=True)
+
+        total_copied = 0
+        for slug in slugs:
+            subdir_name = re.sub(r"[^a-zA-Z0-9._-]+", "_", slug.split("/")[-1]).strip("_") or "dataset"
+            dst = base_dst / subdir_name
+            dst.mkdir(parents=True, exist_ok=True)
+            print(f"=== Téléchargement Kaggle : {slug} -> {dst}/ ===")
+            src = Path(kagglehub.dataset_download(slug))
+            copied = 0
+            for f in sorted(src.rglob("*")):
+                if f.is_file() and f.suffix.lower() in exts:
+                    rel = f.relative_to(src)
+                    target = dst / rel
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(f, target)
+                    print(f"  Copié : {target.relative_to(base_dst)} ({f.stat().st_size / (1024*1024):.2f} Mo)")
+                    copied += 1
+            print(f"Sous-total ({slug}) : {copied} fichier(s) dans {dst}/.")
+            total_copied += copied
+        print(f"Total global : {total_copied} fichier(s) prêt(s) dans data_raw/.")
+        '
+        if docker ps --format '{{ "{{" }}.Names{{ "}}" }}' 2>/dev/null | grep -qx spark-jupyter; then
+          docker exec -w /workspace spark-jupyter python3 -c "$PY_SCRIPT" "$RAW_SLUGS"
+        else
+          uv run --with kagglehub python -c "$PY_SCRIPT" "$RAW_SLUGS"
+        fi
+
+  hdfs:ls:
+    desc: Lister le contenu des couches Médaillon (/lakehouse) sur HDFS
+    cmds:
+      - docker exec namenode hdfs dfs -ls /lakehouse
+      - docker exec namenode hdfs dfs -du -h /lakehouse/*
+
+  hdfs:fsck:
+    desc: Inspecter le découpage en blocs de 16 Mo et la localisation sur les DataNodes
+    cmds:
+      - docker exec namenode hdfs fsck /lakehouse/bronze -files -blocks -locations
+
+  hdfs:crash-dn2:
+    desc: "[Démo J1] Tuer datanode2 pour observer la détection de panne (~50s) sur :9870"
+    cmds:
+      - docker stop datanode2
+      - echo "datanode2 arrêté. Observez http://localhost:9870 (onglet Datanodes) pendant ~50s."
+
+  hdfs:restore-dn2:
+    desc: "[Démo J1] Redémarrer datanode2 après le crash-test"
+    cmds:
+      - docker start datanode2
+
+  # ==========================================
+  # TESTS AUTOMATISÉS (DOCKER + NOTEBOOKS J1..J4)
+  # ==========================================
+  test:docker:
+    desc: Vérifier la santé du cluster HDFS (3 DN), des dossiers Médaillon, JupyterLab et Streamlit
+    cmds:
+      - task: wait-ready
+      - docker exec namenode hdfs dfs -test -d /lakehouse/bronze
+      - docker exec namenode hdfs dfs -test -d /lakehouse/silver
+      - docker exec namenode hdfs dfs -test -d /lakehouse/gold
+      - docker exec namenode hdfs dfs -test -d /lakehouse/warehouse
+      - |
+        curl -fsS "http://localhost:9870/jmx?qry=Hadoop:service=NameNode,name=FSNamesystemState" | grep -q '"NumLiveDataNodes" *: *3'
+      - curl -fsS http://localhost:8501/_stcore/health | grep -q "ok"
+      - echo "Tests infrastructure Docker & HDFS validés avec succès !"
+
+  test:j1:
+    desc: Exécuter et valider le notebook Jour 1 (HDFS & Ingestion Bronze) sans polluer le fichier source
+    cmds:
+      - "{{.JUPYTER_EXEC}} --output /tmp/J1_out.ipynb /workspace/notebooks/J1_HDFS_Ingestion_Bronze.ipynb"
+
+  test:j2:
+    desc: Exécuter et valider le notebook Jour 2 (Spark, Delta ACID & Couche Silver)
+    cmds:
+      - "{{.JUPYTER_EXEC}} --output /tmp/J2_out.ipynb /workspace/notebooks/J2_Spark_Delta_Silver.ipynb"
+
+  test:j3:
+    desc: Exécuter et valider le notebook Jour 3 (Spark SQL, Statistiques & Couche Gold)
+    cmds:
+      - "{{.JUPYTER_EXEC}} --output /tmp/J3_out.ipynb /workspace/notebooks/J3_Analytics_SQL_Gold.ipynb"
+
+  test:j4:
+    desc: Exécuter et valider le notebook Jour 4 (Tests SciPy, Segmentation & Dashboard Gold)
+    cmds:
+      - "{{.JUPYTER_EXEC}} --output /tmp/J4_out.ipynb /workspace/notebooks/J4_Stats_Segmentation_Dashboard.ipynb"
+
+  test:notebooks:
+    desc: Exécuter la chaîne complète des notebooks (Jours 1 à 4) et vérifier les couches Delta sur HDFS
+    cmds:
+      - task: test:j1
+      - task: test:j2
+      - task: test:j3
+      - task: test:j4
+      - |
+        docker exec namenode bash -c 'test $(hdfs dfs -ls -d /lakehouse/bronze/*/_delta_log 2>/dev/null | wc -l) -gt 0'
+        docker exec namenode bash -c 'test $(hdfs dfs -ls -d /lakehouse/silver/*/_delta_log 2>/dev/null | wc -l) -gt 0'
+        docker exec namenode bash -c 'test $(hdfs dfs -ls -d /lakehouse/gold/*/_delta_log 2>/dev/null | wc -l) -gt 0'
+      - echo "Les 4 notebooks (J1 -> J4) et les couches Delta (Bronze, Silver, Gold) sont validés !"
+
+  test:all:
+    desc: Lancer la validation complète (infrastructure Docker + exécution bout-en-bout J1..J4)
+    cmds:
+      - task: test:docker
+      - task: test:notebooks

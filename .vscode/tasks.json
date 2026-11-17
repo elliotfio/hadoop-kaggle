@@ -1,0 +1,130 @@
+{
+  "version": "2.0.0",
+  "inputs": [
+    {
+      "id": "kaggleDataset",
+      "type": "promptString",
+      "description": "Identifiant(s) Kaggle séparés par virgule ou espace (ex: auteur1/dataset-1, auteur2/dataset-2)"
+    }
+  ],
+  "tasks": [
+    {
+      "label": "Cluster : Démarrer (task up)",
+      "type": "shell",
+      "command": "task up",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Cluster : État & Rapport HDFS (task status)",
+      "type": "shell",
+      "command": "task status",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Cluster : Arrêter (task down)",
+      "type": "shell",
+      "command": "task down",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Cluster : Remise à zéro des volumes HDFS (task clean)",
+      "type": "shell",
+      "command": "task clean",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "TP Jour 1 : Télécharger un ou plusieurs datasets Kaggle dans data_raw/",
+      "type": "shell",
+      "command": "task data:download DATASET=\"${input:kaggleDataset}\"",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "TP Jour 1 : Inspecter les blocs HDFS de 16 Mo (task hdfs:fsck)",
+      "type": "shell",
+      "command": "task hdfs:fsck",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "TP Jour 1 : Crash-test DataNode 2 (task hdfs:crash-dn2)",
+      "type": "shell",
+      "command": "task hdfs:crash-dn2",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "TP Jour 1 : Restaurer DataNode 2 (task hdfs:restore-dn2)",
+      "type": "shell",
+      "command": "task hdfs:restore-dn2",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Shell interactif : NameNode HDFS (commandes hdfs dfs / fsck)",
+      "type": "shell",
+      "command": "docker exec -it namenode bash",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Shell interactif : Conteneur PySpark (spark-jupyter)",
+      "type": "shell",
+      "command": "docker exec -it spark-jupyter bash",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Tests : Valider Docker + Notebooks J1 à J4 (task test:all)",
+      "type": "shell",
+      "command": "task test:all",
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "problemMatcher": []
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Python : Fichier courant (PySpark)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${file}",
+      "console": "integratedTerminal",
+      "env": {
+        "PYSPARK_PYTHON": "python3",
+        "PYSPARK_DRIVER_PYTHON": "python3"
+      }
+    },
+    {
+      "name": "Streamlit : Prévisualiser app/dashboard.py (port 8502)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "streamlit",
+      "args": [
+        "run",
+        "${workspaceFolder}/app/dashboard.py",
+        "--server.address=0.0.0.0",
+        "--server.port=8502"
+      ],
+      "console": "integratedTerminal"
+    }
+  ]
+}

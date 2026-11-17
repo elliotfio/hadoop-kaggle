@@ -1,0 +1,178 @@
+x-hadoop-common: &hadoop-common
+  image: local/bigdata-hadoop:3.5.0
+  user: "0:0"
+  environment:
+    HADOOP_HEAPSIZE_MAX: "512m"
+  networks:
+    - bigdata-net
+
+services:
+  # ==========================================
+  # STOCKAGE DISTRIBUÉ : CLUSTER HDFS (1 NN + 3 DN)
+  # ==========================================
+  namenode:
+    <<: *hadoop-common
+    build:
+      context: ./docker/hadoop
+    container_name: namenode
+    hostname: namenode
+    ports:
+      - "9870:9870" # Interface Web HDFS NameNode
+      - "9000:9000" # Port RPC HDFS
+    volumes:
+      - namenode_data:/data
+      - ./config/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml:ro
+      - ./config/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml:ro
+      - ./data_raw:/data_raw:ro
+    command: >
+      bash -c "
+      if [ ! -d /data/hdfs/namenode/current ]; then
+        echo '=== Formatage initial du NameNode ===' &&
+        hdfs namenode -format -force -nonInteractive;
+      fi &&
+      if grep -q 'layoutVersion=-66' /data/hdfs/namenode/current/VERSION 2>/dev/null; then
+        echo '=== Migration automatique du volume HDFS vers Hadoop 3.5 (-upgrade) ===' &&
+        exec hdfs namenode -upgrade;
+      fi &&
+      exec hdfs namenode
+      "
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/9000 && </dev/tcp/localhost/9870'"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+  datanode1:
+    <<: *hadoop-common
+    pull_policy: never
+    container_name: datanode1
+    hostname: datanode1
+    depends_on:
+      namenode:
+        condition: service_healthy
+    volumes:
+      - datanode1_data:/data
+      - ./config/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml:ro
+      - ./config/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml:ro
+    command: ["hdfs", "datanode"]
+
+  datanode2:
+    <<: *hadoop-common
+    pull_policy: never
+    container_name: datanode2
+    hostname: datanode2
+    depends_on:
+      namenode:
+        condition: service_healthy
+    volumes:
+      - datanode2_data:/data
+      - ./config/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml:ro
+      - ./config/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml:ro
+    command: ["hdfs", "datanode"]
+
+  datanode3:
+    <<: *hadoop-common
+    pull_policy: never
+    container_name: datanode3
+    hostname: datanode3
+    depends_on:
+      namenode:
+        condition: service_healthy
+    volumes:
+      - datanode3_data:/data
+      - ./config/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml:ro
+      - ./config/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml:ro
+    command: ["hdfs", "datanode"]
+
+  # Initialisation automatique de l'architecture Médaillon sur HDFS
+  hdfs-init:
+    <<: *hadoop-common
+    pull_policy: never
+    container_name: hdfs-init
+    depends_on:
+      namenode:
+        condition: service_healthy
+      datanode1:
+        condition: service_started
+      datanode2:
+        condition: service_started
+      datanode3:
+        condition: service_started
+    volumes:
+      - ./config/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml:ro
+      - ./config/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml:ro
+    command: >
+      bash -c "
+      hdfs dfs -test -d /lakehouse/warehouse || (
+        hdfs dfsadmin -safemode wait &&
+        hdfs dfs -mkdir -p /lakehouse/bronze /lakehouse/silver /lakehouse/gold /lakehouse/warehouse &&
+        hdfs dfs -chmod -R 777 /lakehouse &&
+        echo '=== Dossiers /lakehouse/{bronze,silver,gold} prêts sur HDFS ==='
+      )
+      "
+    restart: "no"
+
+  # ==========================================
+  # CALCUL & LAKEHOUSE : PYSPARK + DELTA + JUPYTERLAB
+  # ==========================================
+  spark-jupyter:
+    build:
+      context: ./docker/workspace
+    image: local/bigdata-workspace:latest
+    container_name: spark-jupyter
+    hostname: spark-jupyter
+    depends_on:
+      hdfs-init:
+        condition: service_completed_successfully
+    ports:
+      - "8888:8888" # JupyterLab (token : bigdata)
+      - "4040:4040" # Spark Web UI (DAG, Stages, Shuffle — actif quand une session tourne)
+    volumes:
+      - .:/workspace
+      - ./config/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+    command: >
+      jupyter lab
+      --ip=0.0.0.0
+      --port=8888
+      --no-browser
+      --allow-root
+      --IdentityProvider.token='bigdata'
+      --ServerApp.root_dir=/workspace
+    networks:
+      - bigdata-net
+
+  # ==========================================
+  # RESTITUTION : DASHBOARD STREAMLIT
+  # ==========================================
+  streamlit:
+    image: local/bigdata-workspace:latest
+    pull_policy: never
+    container_name: streamlit
+    hostname: streamlit
+    depends_on:
+      hdfs-init:
+        condition: service_completed_successfully
+      spark-jupyter:
+        condition: service_started
+    ports:
+      - "8501:8501" # Interface Dashboard Streamlit
+    volumes:
+      - ./app:/workspace/app
+      - ./config/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+    command: >
+      streamlit run /workspace/app/dashboard.py
+      --server.address=0.0.0.0
+      --server.port=8501
+      --server.runOnSave=true
+    networks:
+      - bigdata-net
+
+volumes:
+  namenode_data:
+  datanode1_data:
+  datanode2_data:
+  datanode3_data:
+
+networks:
+  bigdata-net:
+    driver: bridge

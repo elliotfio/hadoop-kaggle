@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <!-- Réplication à 2 sur 3 DataNodes : permet d'observer l'auto-réparation vers le 3e nœud en cas de panne -->
+  <property>
+    <name>dfs.replication</name>
+    <value>2</value>
+  </property>
+
+  <!-- Blocs réduits à 16 Mo (au lieu de 128 Mo) pour découper visiblement les datasets Kaggle de 50-500 Mo -->
+  <property>
+    <name>dfs.blocksize</name>
+    <value>16777216</value>
+  </property>
+
+  <property>
+    <name>dfs.namenode.name.dir</name>
+    <value>file:///data/hdfs/namenode</value>
+  </property>
+
+  <property>
+    <name>dfs.datanode.data.dir</name>
+    <value>file:///data/hdfs/datanode</value>
+  </property>
+
+  <!-- Écoute RPC et HTTP sur toutes les interfaces (localhost pour le healthcheck + réseau bridge Docker) -->
+  <property>
+    <name>dfs.namenode.rpc-bind-host</name>
+    <value>0.0.0.0</value>
+  </property>
+  <property>
+    <name>dfs.namenode.servicerpc-bind-host</name>
+    <value>0.0.0.0</value>
+  </property>
+  <property>
+    <name>dfs.namenode.http-bind-host</name>
+    <value>0.0.0.0</value>
+  </property>
+
+  <!-- Détection d'un DataNode mort en ~50s (2*10s + 10*3s) au lieu de 10m30s par défaut -->
+  <property>
+    <name>dfs.heartbeat.interval</name>
+    <value>3</value>
+  </property>
+  <property>
+    <name>dfs.namenode.heartbeat.recheck-interval</name>
+    <value>10000</value>
+  </property>
+
+  <!-- Sortie rapide du SafeMode au redémarrage (1s au lieu de 30s par défaut dès que les blocs existent) -->
+  <property>
+    <name>dfs.namenode.safemode.extension</name>
+    <value>1000</value>
+  </property>
+
+  <!-- Évite les rejets DNS inverses internes au réseau bridge Docker et les blocages d'écriture inter-conteneurs -->
+  <property>
+    <name>dfs.namenode.datanode.registration.ip-hostname-check</name>
+    <value>false</value>
+  </property>
+  <property>
+    <name>dfs.client.use.datanode.hostname</name>
+    <value>true</value>
+  </property>
+  <property>
+    <name>dfs.datanode.use.datanode.hostname</name>
+    <value>true</value>
+  </property>
+  <property>
+    <name>dfs.permissions.enabled</name>
+    <value>false</value>
+  </property>
+  <property>
+    <name>dfs.webhdfs.enabled</name>
+    <value>true</value>
+  </property>
+</configuration>

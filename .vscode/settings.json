@@ -1,0 +1,56 @@
+{
+  // ==========================================
+  // PYTHON & KERNEL JUPYTER (Conteneur spark-jupyter)
+  // ==========================================
+  "python.defaultInterpreterPath": "/usr/local/bin/python3",
+  "python.terminal.activateEnvironment": false,
+  "python.analysis.typeCheckingMode": "basic",
+  "python.analysis.indexing": true,
+
+  "jupyter.notebookFileRoot": "${workspaceFolder}",
+  "jupyter.askForKernelRestart": false,
+  "jupyter.interactiveWindow.textEditor.executeSelection": true,
+  "notebook.lineNumbers": "on",
+  "notebook.stickyScroll.enabled": true,
+  "notebook.output.textLineLimit": 50,
+  "notebook.formatOnSave.enabled": false,
+
+  // ==========================================
+  // QUALITÉ DE CODE & FORMATAGE (Ruff)
+  // ==========================================
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.fixAll.ruff": "explicit",
+      "source.organizeImports.ruff": "explicit"
+    }
+  },
+  "ruff.lineLength": 108,
+
+  // ==========================================
+  // CONFORT ÉDITEUR & FICHIERS DE CONFIG HADOOP / DOCKER
+  // ==========================================
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true,
+  "files.eol": "\n",
+  "files.associations": {
+    "*.xml": "xml",
+    "spark-defaults.conf": "properties",
+    "Taskfile.yml": "yaml",
+    "docker-compose.yml": "dockercompose"
+  },
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/.ipynb_checkpoints": true,
+    "**/.pytest_cache": true,
+    "**/.ruff_cache": true,
+    "**/metastore_db": true,
+    "**/spark-warehouse": true,
+    "**/derby.log": true
+  },
+  "search.exclude": {
+    "**/data_raw/**": true,
+    "**/.venv": true
+  }
+}
